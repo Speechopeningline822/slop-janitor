@@ -2,7 +2,16 @@
 
 `codex-refactor-loop` is a small CLI that drives the Codex app-server through a repeatable multi-turn workflow.
 
-The point is simple: if you use Codex directly, chaining a long sequence of messages is manual work. You ask for a refactor. Then you ask it to improve the plan. Then improve it again. Then implement it. Then review the result. Then review it again with fresh eyes. `codex-refactor-loop` automates that chain.
+The point is simple: if you use Codex directly, chaining a long sequence of messages is manual work. A typical loop looks like this:
+
+- ask Codex what the best refactor is
+- ask it to improve that plan
+- ask it to improve it again
+- ask it to implement the plan
+- ask it to review the result
+- ask it to review it again with fresh eyes
+
+`codex-refactor-loop` automates that chain.
 
 That matters because the value is not in any single turn. The value comes from compounding turns. A repo often gets materially better only after Codex has had a chance to propose a direction, sharpen it, implement it, and then critique its own work. `codex-refactor-loop` keeps that whole process on one thread so each step can build on the previous one instead of starting over.
 
@@ -29,6 +38,26 @@ You can change the number of full cycles, improvement passes, and review passes.
 - It works from the root of any repo because it sends your current working directory to `thread/start`.
 
 This is useful when you want Codex to keep working the problem until the repo is in better shape, not just answer once.
+
+## Exec Plans
+
+An exec plan is a concrete implementation plan written for a coding agent, not just a human. It says what to change, in what order, how to verify it, and what success looks like. In this repo, the rules for writing a good exec plan live in `.agent/PLANS.md`.
+
+That file matters because it forces the plan to be specific before code gets written. The better the plan is, the cheaper the whole loop is. It is much cheaper to improve a plan four times up front than to implement a vague plan, ship bugs, and then spend more turns fixing avoidable mistakes later.
+
+If you want the OpenAI background on the idea, read the Codex cookbook article on exec plans: [Codex Exec Plans](https://developers.openai.com/cookbook/articles/codex_exec_plans).
+
+## Bundled Skills
+
+The loop is built from a small set of repo-local skills in `.agents/skills`:
+
+- `find-best-refactor`: picks the highest-leverage refactor to make the repo cleaner and more reliable.
+- `execplan-create`: turns a prompt into a concrete exec plan.
+- `execplan-improve`: stress-tests and rewrites the plan against the actual codebase before implementation starts.
+- `implement-execplan`: executes the plan end to end.
+- `review-recent-work`: does a fresh-eyes review pass and catches bugs or rough edges after implementation.
+
+The most important step here is `execplan-improve`. That is where the system slows down just enough to get the shape of the work right. In practice, this is often the cheapest part of the loop, because finding gaps in a plan is much cheaper than finding the same gaps later as bugs, regressions, or half-finished refactors.
 
 ## Prerequisites
 
