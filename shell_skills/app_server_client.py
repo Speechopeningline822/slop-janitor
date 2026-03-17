@@ -85,8 +85,8 @@ class AppServerClient:
             "initialize",
             {
                 "clientInfo": {
-                    "name": "run-cycle",
-                    "title": "run-cycle",
+                    "name": "codex-refactor-loop",
+                    "title": "codex-refactor-loop",
                     "version": "0.1.0",
                 },
                 "capabilities": {"experimentalApi": True},
@@ -390,7 +390,7 @@ class AppServerClient:
             self._send_server_result(request_id, {"permissions": {}, "scope": "turn"})
             return "permission approval is unsupported in this pipeline"
         if method == "account/chatgptAuthTokens/refresh":
-            self._send_server_error(request_id, "external auth refresh is unsupported in run-cycle")
+            self._send_server_error(request_id, "external auth refresh is unsupported in codex-refactor-loop")
             return "external auth refresh is unsupported in this pipeline"
         self._send_server_error(request_id, f"unsupported server request `{method}`")
         return f"received unsupported server request `{method}`"

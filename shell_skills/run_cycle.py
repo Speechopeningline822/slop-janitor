@@ -271,7 +271,7 @@ def extract_root_config_args(args: list[str]) -> tuple[list[str], list[str]]:
 
 def build_auth_command(base_argv: tuple[str, ...], argv: list[str]) -> list[str]:
     if not argv:
-        raise AppServerError("usage: run-cycle auth <login|status|logout> [args]")
+        raise AppServerError("usage: codex-refactor-loop auth <login|status|logout> [args]")
     verb = argv[0]
     extras = argv[1:]
     root_args, remaining = extract_root_config_args(extras)
@@ -305,7 +305,7 @@ def run_auth(
 
 
 def build_run_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="run-cycle")
+    parser = argparse.ArgumentParser(prog="codex-refactor-loop")
     parser.add_argument("--codex-workspace")
     parser.add_argument("--mode", choices=("pipeline", "refactor"), default="pipeline")
     parser.add_argument("--prompt")
@@ -316,7 +316,7 @@ def build_run_parser() -> argparse.ArgumentParser:
 
 
 def build_auth_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="run-cycle auth")
+    parser = argparse.ArgumentParser(prog="codex-refactor-loop auth")
     parser.add_argument("--codex-workspace")
     parser.add_argument("auth_args", nargs=argparse.REMAINDER)
     return parser
@@ -375,7 +375,7 @@ def run(
         account_info = client.get_account()
         if account_info.get("requiresOpenaiAuth") and account_info.get("account") is None:
             run_logger.write_line(
-                "OpenAI auth is required before starting the pipeline. Run `./run-cycle auth login`.",
+                "OpenAI auth is required before starting the pipeline. Run `./codex-refactor-loop auth login`.",
                 to_terminal=True,
                 stream="stderr",
             )
@@ -422,7 +422,7 @@ def main(argv: list[str] | None = None) -> int:
         try:
             auth_args = build_auth_parser().parse_args(raw_argv[1:])
             if not auth_args.auth_args:
-                raise AppServerError("usage: run-cycle auth <login|status|logout> [args]")
+                raise AppServerError("usage: codex-refactor-loop auth <login|status|logout> [args]")
             build_auth_command((), auth_args.auth_args)
             codex_workspace = resolve_codex_workspace(auth_args.codex_workspace)
             return run_auth(auth_args.auth_args, codex_workspace=codex_workspace)

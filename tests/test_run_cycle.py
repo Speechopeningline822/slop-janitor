@@ -213,7 +213,7 @@ class RunCycleTests(unittest.TestCase):
         methods = [message["method"] for message in self.inbound_messages(record) if "method" in message]
 
         self.assertEqual(exit_code, 1)
-        self.assertIn("run-cycle auth login", stderr)
+        self.assertIn("codex-refactor-loop auth login", stderr)
         self.assertNotIn("thread/start", methods)
 
     def test_pipeline_mode_requires_prompt(self) -> None:
