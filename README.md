@@ -1,5 +1,7 @@
 # `slop-janitor`
 
+![slop-janitor](slop-janitor.png)
+
 **Important: you must clone both this repo and the open-source Codex repo.** `slop-janitor` talks directly to Codex's app-server implementation, so it will not work with only this repository checked out.
 
 `slop-janitor` automatically makes a repo cleaner, simpler, and more reliable.
