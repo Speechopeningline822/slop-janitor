@@ -124,11 +124,17 @@ def build_refactor_stages(
     improvement_count: int,
     review_count: int,
 ) -> list[Stage]:
-    text = "$find-best-refactor"
     if prompt:
-        text = f"{text} {prompt}"
+        refactor_prompt = prompt
     else:
-        text = f"{text} find the single highest-leverage refactor in this repository"
+        refactor_prompt = "find the single highest-leverage refactor in this repository"
+    text = (
+        "$find-best-refactor "
+        f"{refactor_prompt}\n\n"
+        "This stage is planning only. Do not implement the refactor or modify repository code in this stage. "
+        "Write the chosen implementation-ready ExecPlan to .agent/execplan-pending.md in the current working "
+        "repository, then stop."
+    )
     stages: list[Stage] = []
     for cycle_index in range(1, cycles + 1):
         stages.append(

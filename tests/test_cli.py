@@ -32,6 +32,11 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 FAKE_APP_SERVER = REPO_ROOT / "tests" / "fixtures" / "fake_app_server.py"
 FAKE_CODEX_CLI = REPO_ROOT / "tests" / "fixtures" / "fake_codex_cli.py"
 PROMPT = "help me build a CRM"
+REFACTOR_STAGE_SUFFIX = (
+    "\n\nThis stage is planning only. Do not implement the refactor or modify repository code in this stage. "
+    "Write the chosen implementation-ready ExecPlan to .agent/execplan-pending.md in the current working "
+    "repository, then stop."
+)
 
 
 @contextlib.contextmanager
@@ -481,7 +486,7 @@ class CliTests(unittest.TestCase):
         self.assertIn("=== Stage 11/11: review-recent-work-5 ===", log_text)
         text_input = turn_starts[0]["params"]["input"][0]
         skill_input = turn_starts[0]["params"]["input"][1]
-        self.assertEqual(text_input["text"], f"$find-best-refactor {PROMPT}")
+        self.assertEqual(text_input["text"], f"$find-best-refactor {PROMPT}{REFACTOR_STAGE_SUFFIX}")
         self.assertEqual(skill_input["name"], "find-best-refactor")
         self.assertTrue(skill_input["path"].endswith("/find-best-refactor/SKILL.md"))
         self.assertEqual(
@@ -506,7 +511,8 @@ class CliTests(unittest.TestCase):
         self.assertIn("=== Stage 1/11: find-best-refactor ===", log_text)
         self.assertEqual(
             turn_start["params"]["input"][0]["text"],
-            "$find-best-refactor find the single highest-leverage refactor in this repository",
+            "$find-best-refactor find the single highest-leverage refactor in this repository"
+            f"{REFACTOR_STAGE_SUFFIX}",
         )
 
     def test_custom_cycles_improvements_and_review_counts(self) -> None:
@@ -701,9 +707,17 @@ class CliTests(unittest.TestCase):
         self.assertEqual(stages[0].label, "find-best-refactor")
         self.assertEqual(
             stages[0].text,
-            "$find-best-refactor find the single highest-leverage refactor in this repository",
+            "$find-best-refactor find the single highest-leverage refactor in this repository"
+            f"{REFACTOR_STAGE_SUFFIX}",
         )
         self.assertEqual(stages[1].label, "execplan-improve-1")
+
+    def test_build_refactor_stage_forbids_implementation_during_planning_stage(self) -> None:
+        stages = build_refactor_stages(PROMPT, cycles=1, improvement_count=4, review_count=5)
+
+        self.assertIn("This stage is planning only.", stages[0].text)
+        self.assertIn("Do not implement the refactor or modify repository code", stages[0].text)
+        self.assertIn(".agent/execplan-pending.md", stages[0].text)
 
     def test_build_stages_respects_custom_counts(self) -> None:
         stages = build_stages(

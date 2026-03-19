@@ -11,6 +11,11 @@ from typing import Any
 
 SKILLS_ROOT = str(Path(__file__).resolve().parents[2] / ".agents" / "skills")
 PROMPT = "help me build a CRM"
+REFACTOR_STAGE_SUFFIX = (
+    "\n\nThis stage is planning only. Do not implement the refactor or modify repository code in this stage. "
+    "Write the chosen implementation-ready ExecPlan to .agent/execplan-pending.md in the current working "
+    "repository, then stop."
+)
 
 
 def build_follow_up_stages(*, improvement_count: int, review_count: int) -> list[dict[str, str]]:
@@ -60,11 +65,11 @@ def build_expected_refactor_stages(
     improvement_count: int,
     review_count: int,
 ) -> list[dict[str, str]]:
-    text = "$find-best-refactor"
     if prompt:
-        text = f"{text} {prompt}"
+        refactor_prompt = prompt
     else:
-        text = f"{text} find the single highest-leverage refactor in this repository"
+        refactor_prompt = "find the single highest-leverage refactor in this repository"
+    text = f"$find-best-refactor {refactor_prompt}{REFACTOR_STAGE_SUFFIX}"
     stages: list[dict[str, str]] = []
     for _ in range(cycles):
         stages.append(
