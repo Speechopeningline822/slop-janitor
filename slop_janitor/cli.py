@@ -3,9 +3,11 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import re
 import shutil
 import subprocess
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -50,6 +52,12 @@ class AutoCommitState:
     enabled: bool
     repo_root: Path
     excluded_relative_paths: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class ExecPlanSnapshot:
+    mtime_ns: int
+    size: int
 
 
 def stage_label(base_label: str, *, cycle_index: int, cycles: int) -> str:
@@ -142,13 +150,15 @@ def build_refactor_stages(
     return stages
 
 
-def validate_counts(*, cycles: int, improvement_count: int, review_count: int) -> None:
+def validate_counts(*, cycles: int, improvement_count: int, review_count: int, delay_between_cycles_minutes: float = 0.0) -> None:
     if cycles < 1:
         raise AppServerError("`--cycles` must be at least 1")
     if improvement_count < 0:
         raise AppServerError("`--improvements` must be 0 or greater")
     if review_count < 0:
         raise AppServerError("`--review` must be 0 or greater")
+    if delay_between_cycles_minutes < 0:
+        raise AppServerError("`--delay-between-cycles-minutes` must be 0 or greater")
 
 
 def build_stages(
@@ -159,7 +169,11 @@ def build_stages(
     improvement_count: int,
     review_count: int,
 ) -> list[Stage]:
-    validate_counts(cycles=cycles, improvement_count=improvement_count, review_count=review_count)
+    validate_counts(
+        cycles=cycles,
+        improvement_count=improvement_count,
+        review_count=review_count,
+    )
     if mode == "pipeline":
         if not prompt:
             raise AppServerError("`--prompt` is required when `--mode pipeline` is selected")
@@ -299,6 +313,7 @@ def build_run_parser() -> argparse.ArgumentParser:
     parser.add_argument("--cycles", type=int, default=1)
     parser.add_argument("--improvements", type=int, default=4)
     parser.add_argument("--review", type=int, default=5)
+    parser.add_argument("--delay-between-cycles-minutes", type=float, default=0.0)
     return parser
 
 
@@ -342,21 +357,27 @@ def git_add_all(repo_root: Path, excluded_relative_paths: tuple[str, ...] = ()) 
     )
 
 
-def prepare_auto_commit_state(run_cwd: Path, run_logger: RunLogger) -> AutoCommitState:
-    if shutil.which("git") is None:
-        run_logger.write_line("[commit] auto-commit disabled: `git` is not available")
-        return AutoCommitState(enabled=False, repo_root=run_cwd)
+def git_repo_root(path: Path) -> Path | None:
     probe = subprocess.run(
         ["git", "rev-parse", "--show-toplevel"],
-        cwd=run_cwd,
+        cwd=path,
         check=False,
         capture_output=True,
         text=True,
     )
     if probe.returncode != 0:
-        run_logger.write_line("[commit] auto-commit disabled: target directory is not inside a git repository")
-        return AutoCommitState(enabled=False, repo_root=run_cwd)
-    repo_root = Path(probe.stdout.strip())
+        return None
+    return Path(probe.stdout.strip())
+
+
+def build_auto_commit_state(path: Path, run_logger: RunLogger, *, label: str) -> AutoCommitState:
+    if shutil.which("git") is None:
+        run_logger.write_line(f"[commit] auto-commit disabled for {label}: `git` is not available")
+        return AutoCommitState(enabled=False, repo_root=path)
+    repo_root = git_repo_root(path)
+    if repo_root is None:
+        run_logger.write_line(f"[commit] auto-commit disabled for {label}: target directory is not inside a git repository")
+        return AutoCommitState(enabled=False, repo_root=path)
     repo_root_resolved = repo_root.resolve(strict=False)
     excluded_relative_paths: tuple[str, ...] = ()
     try:
@@ -366,17 +387,60 @@ def prepare_auto_commit_state(run_cwd: Path, run_logger: RunLogger) -> AutoCommi
         excluded_relative_paths = ()
     has_changes = git_status_has_changes(repo_root, excluded_relative_paths)
     if has_changes is None:
-        run_logger.write_line("[commit] auto-commit disabled: failed to inspect git status")
+        run_logger.write_line(f"[commit] auto-commit disabled for {label}: failed to inspect git status")
         return AutoCommitState(enabled=False, repo_root=repo_root)
     if has_changes:
-        run_logger.write_line("[commit] auto-commit disabled: repository had pre-existing changes at start")
+        run_logger.write_line(f"[commit] auto-commit disabled for {label}: repository had pre-existing changes at start")
         return AutoCommitState(enabled=False, repo_root=repo_root)
-    run_logger.write_line(f"[commit] auto-commit enabled for {repo_root}")
+    run_logger.write_line(f"[commit] auto-commit enabled for {label}: {repo_root}")
     return AutoCommitState(
         enabled=True,
         repo_root=repo_root,
         excluded_relative_paths=excluded_relative_paths,
     )
+
+
+def extract_repo_paths_from_prompt(prompt: str | None) -> list[Path]:
+    if not prompt:
+        return []
+    paths: list[Path] = []
+    seen: set[Path] = set()
+    for match in re.findall(r"(?:~|/)[^\s\"']+", prompt):
+        raw_path = match.rstrip(".,:;!?)]}\"'")
+        path = Path(raw_path).expanduser()
+        if not path.exists() or not path.is_dir():
+            continue
+        resolved = path.resolve(strict=False)
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        paths.append(path)
+    return paths
+
+
+def prepare_auto_commit_state(run_cwd: Path, run_logger: RunLogger) -> AutoCommitState:
+    return build_auto_commit_state(run_cwd, run_logger, label="primary repo")
+
+
+def prepare_auto_commit_states(run_cwd: Path, prompt: str | None, run_logger: RunLogger) -> list[AutoCommitState]:
+    states = [prepare_auto_commit_state(run_cwd, run_logger)]
+    seen_roots = {states[0].repo_root.resolve(strict=False)}
+    for candidate in extract_repo_paths_from_prompt(prompt):
+        repo_root = git_repo_root(candidate)
+        if repo_root is None:
+            continue
+        resolved_root = repo_root.resolve(strict=False)
+        if resolved_root in seen_roots:
+            continue
+        seen_roots.add(resolved_root)
+        states.append(
+            build_auto_commit_state(
+                candidate,
+                run_logger,
+                label=f"linked repo {repo_root}",
+            )
+        )
+    return states
 
 
 def maybe_commit_checkpoint(auto_commit: AutoCommitState, run_logger: RunLogger, message: str) -> None:
@@ -408,6 +472,11 @@ def maybe_commit_checkpoint(auto_commit: AutoCommitState, run_logger: RunLogger,
     run_logger.write_line(f"[commit] created `{message}`")
 
 
+def maybe_commit_checkpoints(auto_commits: list[AutoCommitState], run_logger: RunLogger, message: str) -> None:
+    for auto_commit in auto_commits:
+        maybe_commit_checkpoint(auto_commit, run_logger, message)
+
+
 def maybe_commit_for_stage(
     auto_commit: AutoCommitState,
     run_logger: RunLogger,
@@ -422,6 +491,100 @@ def maybe_commit_for_stage(
         maybe_commit_checkpoint(auto_commit, run_logger, f"slop-janitor: after {stage.label}")
 
 
+def maybe_commit_for_stages(
+    auto_commits: list[AutoCommitState],
+    run_logger: RunLogger,
+    stage: Stage,
+    *,
+    stage_index: int,
+) -> None:
+    if stage_index == 1:
+        maybe_commit_checkpoints(auto_commits, run_logger, "slop-janitor: initial plan created")
+        return
+    if stage.skill_name == "implement-execplan":
+        maybe_commit_checkpoints(auto_commits, run_logger, f"slop-janitor: after {stage.label}")
+
+
+def stages_per_cycle(*, improvement_count: int, review_count: int) -> int:
+    return improvement_count + review_count + 2
+
+
+def is_cycle_start_stage_index(stage_index: int, *, improvement_count: int, review_count: int) -> bool:
+    return (stage_index - 1) % stages_per_cycle(
+        improvement_count=improvement_count,
+        review_count=review_count,
+    ) == 0
+
+
+def pending_execplan_path(run_cwd: Path) -> Path:
+    return run_cwd / ".agent" / "execplan-pending.md"
+
+
+def read_execplan_snapshot(path: Path) -> ExecPlanSnapshot | None:
+    if not path.is_file():
+        return None
+    stat = path.stat()
+    return ExecPlanSnapshot(mtime_ns=stat.st_mtime_ns, size=stat.st_size)
+
+
+def ensure_pending_execplan_exists(run_cwd: Path, stage: Stage) -> None:
+    path = pending_execplan_path(run_cwd)
+    if path.is_file():
+        return
+    raise AppServerError(
+        f"stage `{stage.label}` requires a pending execplan, but `{path}` is missing"
+    )
+
+
+def ensure_cycle_plan_was_refreshed(
+    run_cwd: Path,
+    stage: Stage,
+    *,
+    previous_snapshot: ExecPlanSnapshot | None,
+) -> None:
+    path = pending_execplan_path(run_cwd)
+    current_snapshot = read_execplan_snapshot(path)
+    if current_snapshot is None:
+        raise AppServerError(
+            f"stage `{stage.label}` did not produce `{path}`"
+        )
+    if previous_snapshot is not None and current_snapshot == previous_snapshot:
+        raise AppServerError(
+            f"stage `{stage.label}` did not refresh `{path}` for the new cycle"
+        )
+
+
+def ensure_pending_execplan_consumed(run_cwd: Path, stage: Stage) -> None:
+    path = pending_execplan_path(run_cwd)
+    if not path.exists():
+        return
+    raise AppServerError(
+        f"stage `{stage.label}` completed but left `{path}` in place"
+    )
+
+
+def maybe_delay_between_cycles(
+    *,
+    stage_index: int,
+    total_stages: int,
+    improvement_count: int,
+    review_count: int,
+    delay_between_cycles_minutes: float,
+    run_logger: RunLogger,
+) -> None:
+    if delay_between_cycles_minutes <= 0:
+        return
+    if stage_index >= total_stages:
+        return
+    if stage_index % stages_per_cycle(improvement_count=improvement_count, review_count=review_count) != 0:
+        return
+    run_logger.write_line(
+        f"Sleeping {delay_between_cycles_minutes} minute(s) before the next cycle.",
+        to_terminal=True,
+    )
+    time.sleep(delay_between_cycles_minutes * 60)
+
+
 def run(
     argv: list[str] | None = None,
     *,
@@ -432,7 +595,7 @@ def run(
     args = parser.parse_args(argv)
     client: AppServerClient | None = None
     run_logger: RunLogger | None = None
-    auto_commit: AutoCommitState | None = None
+    auto_commits: list[AutoCommitState] = []
     try:
         run_cwd = Path.cwd()
         run_logger = create_run_logger(
@@ -444,8 +607,15 @@ def run(
         run_logger.write_line(f"cycles={args.cycles}")
         run_logger.write_line(f"improvements={args.improvements}")
         run_logger.write_line(f"review={args.review}")
+        run_logger.write_line(f"delayBetweenCyclesMinutes={args.delay_between_cycles_minutes}")
         run_logger.write_line("")
-        auto_commit = prepare_auto_commit_state(run_cwd, run_logger)
+        validate_counts(
+            cycles=args.cycles,
+            improvement_count=args.improvements,
+            review_count=args.review,
+            delay_between_cycles_minutes=args.delay_between_cycles_minutes,
+        )
+        auto_commits = prepare_auto_commit_states(run_cwd, args.prompt, run_logger)
         stages = build_stages(
             args.mode,
             args.prompt,
@@ -475,8 +645,20 @@ def run(
             )
             return 1
 
-        thread_id = client.start_thread(str(run_cwd))
+        thread_id: str | None = None
+        cycle_start_execplan_snapshot: ExecPlanSnapshot | None = None
         for index, stage in enumerate(stages, start=1):
+            if is_cycle_start_stage_index(
+                index,
+                improvement_count=args.improvements,
+                review_count=args.review,
+            ):
+                thread_id = client.start_thread(str(run_cwd))
+                cycle_start_execplan_snapshot = read_execplan_snapshot(pending_execplan_path(run_cwd))
+            if thread_id is None:
+                raise AppServerError("failed to start a cycle thread")
+            if stage.skill_name in {"execplan-improve", "implement-execplan"}:
+                ensure_pending_execplan_exists(run_cwd, stage)
             run_logger.write_line(f"=== Stage {index}/{len(stages)}: {stage.label} ===")
             result = client.run_turn(thread_id, stage)
             if result.token_usage is not None:
@@ -496,8 +678,28 @@ def run(
                     stream="stderr",
                 )
                 return 1
-            maybe_commit_for_stage(auto_commit, run_logger, stage, stage_index=index)
-        maybe_commit_checkpoint(auto_commit, run_logger, "slop-janitor: final checkpoint")
+            if is_cycle_start_stage_index(
+                index,
+                improvement_count=args.improvements,
+                review_count=args.review,
+            ):
+                ensure_cycle_plan_was_refreshed(
+                    run_cwd,
+                    stage,
+                    previous_snapshot=cycle_start_execplan_snapshot,
+                )
+            if stage.skill_name == "implement-execplan":
+                ensure_pending_execplan_consumed(run_cwd, stage)
+            maybe_commit_for_stages(auto_commits, run_logger, stage, stage_index=index)
+            maybe_delay_between_cycles(
+                stage_index=index,
+                total_stages=len(stages),
+                improvement_count=args.improvements,
+                review_count=args.review,
+                delay_between_cycles_minutes=args.delay_between_cycles_minutes,
+                run_logger=run_logger,
+            )
+        maybe_commit_checkpoints(auto_commits, run_logger, "slop-janitor: final checkpoint")
         return 0
     except AppServerError as exc:
         if run_logger is not None:

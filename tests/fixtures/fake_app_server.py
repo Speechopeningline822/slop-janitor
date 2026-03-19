@@ -87,7 +87,9 @@ class FakeServer:
         self.scenario = scenario
         self.record_path = record_path
         self.transcript: list[dict[str, Any]] = []
-        self.thread_id = "thread-1"
+        self.thread_id = "thread-0"
+        self.thread_count = 0
+        self.run_cwd: Path | None = None
         config_path = Path(sys.argv[3]) if len(sys.argv) == 4 else None
         self.config = {
             "mode": "pipeline",
@@ -113,6 +115,54 @@ class FakeServer:
                 review_count=int(self.config["review"]),
             )
         self.error: str | None = None
+
+    def pending_execplan_path(self) -> Path:
+        if self.run_cwd is None:
+            raise ProtocolError("run cwd is not set")
+        return self.run_cwd / ".agent" / "execplan-pending.md"
+
+    def complete_cycle_plan_side_effect(self, stage_index: int) -> None:
+        if self.scenario == "refactor_missing_execplan":
+            return
+        stage = self.expected_stages[stage_index]
+        path = self.pending_execplan_path()
+        if stage["skill_name"] in {"execplan-create", "find-best-refactor"}:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(f"plan for stage {stage_index + 1}\n", encoding="utf-8")
+            return
+        if stage["skill_name"] == "implement-execplan" and path.exists():
+            done_dir = path.parent / "done"
+            done_dir.mkdir(parents=True, exist_ok=True)
+            done_path = done_dir / f"completed-{stage_index + 1}.md"
+            done_path.write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
+            path.unlink()
+
+    def handle_thread_start(self) -> None:
+        thread_start = self.expect_request("thread/start")
+        thread_params = thread_start.get("params", {})
+        if thread_params.get("approvalPolicy") != "never":
+            raise ProtocolError(f"unexpected approvalPolicy: {thread_params}")
+        if not isinstance(thread_params.get("cwd"), str) or not thread_params["cwd"]:
+            raise ProtocolError(f"thread/start missing cwd: {thread_params}")
+        self.run_cwd = Path(thread_params["cwd"])
+        self.thread_count += 1
+        self.thread_id = f"thread-{self.thread_count}"
+        self.send(
+            {
+                "id": thread_start["id"],
+                "result": {
+                    "thread": {"id": self.thread_id},
+                    "model": "gpt-5.4",
+                    "modelProvider": "openai",
+                    "cwd": thread_params["cwd"],
+                    "approvalPolicy": "never",
+                    "approvalsReviewer": {"type": "cli"},
+                    "sandbox": {"mode": "danger-full-access"},
+                    "reasoningEffort": "medium",
+                },
+            }
+        )
+        self.send({"method": "thread/started", "params": {"thread": {"id": self.thread_id}}})
 
     def send(self, message: dict[str, Any]) -> None:
         self.transcript.append({"direction": "out", "message": message})
@@ -221,28 +271,7 @@ class FakeServer:
             }
         )
 
-        thread_start = self.expect_request("thread/start")
-        thread_params = thread_start.get("params", {})
-        if thread_params.get("approvalPolicy") != "never":
-            raise ProtocolError(f"unexpected approvalPolicy: {thread_params}")
-        if not isinstance(thread_params.get("cwd"), str) or not thread_params["cwd"]:
-            raise ProtocolError(f"thread/start missing cwd: {thread_params}")
-        self.send(
-            {
-                "id": thread_start["id"],
-                "result": {
-                    "thread": {"id": self.thread_id},
-                    "model": "gpt-5.4",
-                    "modelProvider": "openai",
-                    "cwd": thread_params["cwd"],
-                    "approvalPolicy": "never",
-                    "approvalsReviewer": {"type": "cli"},
-                    "sandbox": {"mode": "danger-full-access"},
-                    "reasoningEffort": "medium",
-                },
-            }
-        )
-        self.send({"method": "thread/started", "params": {"thread": {"id": self.thread_id}}})
+        self.handle_thread_start()
 
         if self.scenario == "multi_agent_items":
             self.run_multi_agent_stage()
@@ -340,7 +369,7 @@ class FakeServer:
         if self.scenario == "happy_path":
             self.run_happy_path()
             return
-        if self.scenario in {"refactor_with_prompt", "refactor_without_prompt"}:
+        if self.scenario in {"refactor_with_prompt", "refactor_without_prompt", "refactor_missing_execplan"}:
             self.run_happy_path()
             return
         raise ProtocolError(f"unsupported scenario: {self.scenario}")
@@ -410,7 +439,10 @@ class FakeServer:
         self.send({"method": "turn/completed", "params": {"threadId": self.thread_id, "turn": turn}})
 
     def run_happy_path(self) -> None:
+        cycle_length = int(self.config["improvements"]) + int(self.config["review"]) + 2
         for stage_index in range(len(self.expected_stages)):
+            if stage_index > 0 and stage_index % cycle_length == 0:
+                self.handle_thread_start()
             turn_start = self.expect_request("turn/start")
             _, turn_id = self.validate_turn_start(turn_start, stage_index)
             if stage_index == 0:
@@ -616,6 +648,7 @@ class FakeServer:
                         },
                     }
                 )
+            self.complete_cycle_plan_side_effect(stage_index)
             self.send_token_usage(turn_id, stage_index)
             self.complete_turn(turn_id)
 

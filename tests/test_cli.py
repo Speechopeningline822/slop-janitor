@@ -4,6 +4,7 @@ import contextlib
 import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -15,8 +16,11 @@ from slop_janitor.app_server import AppServerSpawnSpec
 from slop_janitor.cli import build_refactor_stages
 from slop_janitor.cli import build_stages
 from slop_janitor.cli import main
+from slop_janitor.cli import maybe_commit_checkpoints
 from slop_janitor.cli import maybe_commit_checkpoint
+from slop_janitor.cli import maybe_commit_for_stages
 from slop_janitor.cli import maybe_commit_for_stage
+from slop_janitor.cli import prepare_auto_commit_states
 from slop_janitor.cli import prepare_auto_commit_state
 from slop_janitor.cli import resolve_codex_workspace
 from slop_janitor.cli import run
@@ -91,6 +95,8 @@ class CliTests(unittest.TestCase):
         record_path = Path(tempdir.name) / f"{scenario}.json"
         config_path = Path(tempdir.name) / f"{scenario}-config.json"
         runs_dir = Path(tempdir.name) / "runs"
+        default_target_cwd = Path(tempdir.name) / "workspace"
+        default_target_cwd.mkdir()
         stdout = io.StringIO()
         stderr = io.StringIO()
         cli_argv = argv or ["--prompt", PROMPT]
@@ -137,7 +143,7 @@ class CliTests(unittest.TestCase):
             ),
             encoding="utf-8",
         )
-        with chdir(target_cwd or REPO_ROOT):
+        with chdir(target_cwd or default_target_cwd):
             with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
                 exit_code = run(
                     cli_argv,
@@ -218,7 +224,7 @@ class CliTests(unittest.TestCase):
 
     def test_missing_openai_auth_fails_with_auth_hint(self) -> None:
         target_dir = Path(tempfile.mkdtemp())
-        self.addCleanup(target_dir.rmdir)
+        self.addCleanup(lambda: shutil.rmtree(target_dir, ignore_errors=True))
         exit_code, _, stderr, record_path = self.run_pipeline("missing_auth", target_cwd=target_dir)
         record = self.read_json(record_path)
         methods = [message["method"] for message in self.inbound_messages(record) if "method" in message]
@@ -267,6 +273,19 @@ class CliTests(unittest.TestCase):
 
         self.assertEqual(exit_code, 1)
         self.assertIn("`--review` must be 0 or greater", stderr.getvalue())
+
+    def test_invalid_delay_between_cycles_fails(self) -> None:
+        tempdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tempdir.cleanup)
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            exit_code = run(
+                ["--prompt", PROMPT, "--delay-between-cycles-minutes", "-1"],
+                runs_dir=Path(tempdir.name) / "runs",
+            )
+
+        self.assertEqual(exit_code, 1)
+        self.assertIn("`--delay-between-cycles-minutes` must be 0 or greater", stderr.getvalue())
 
     def test_invalid_runs_dir_fails_cleanly(self) -> None:
         tempdir = tempfile.TemporaryDirectory()
@@ -383,6 +402,66 @@ class CliTests(unittest.TestCase):
         ).stdout.strip()
         self.assertEqual(history, "initial")
 
+    def test_auto_commit_can_checkpoint_prompt_linked_repo(self) -> None:
+        tempdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tempdir.cleanup)
+        workspace_root = Path(tempdir.name)
+        cloud_root = workspace_root / "openclaw-cloud"
+        studio_root = workspace_root / "openclaw-studio-private"
+        cloud_root.mkdir()
+        studio_root.mkdir()
+        self.init_git_repo(cloud_root)
+        self.init_git_repo(studio_root)
+        prompt = f"Treat {cloud_root} and {studio_root} as one project"
+        run_logger = RunLogger(cloud_root / "run.log", run_cwd=cloud_root, mode="refactor", prompt=prompt)
+        try:
+            auto_commits = prepare_auto_commit_states(cloud_root, prompt, run_logger)
+            self.assertEqual(len(auto_commits), 2)
+            self.assertTrue(all(auto_commit.enabled for auto_commit in auto_commits))
+
+            (cloud_root / ".agent").mkdir()
+            (cloud_root / ".agent" / "execplan-pending.md").write_text("plan\n", encoding="utf-8")
+            (studio_root / "studio-plan.txt").write_text("plan\n", encoding="utf-8")
+            maybe_commit_for_stages(
+                auto_commits,
+                run_logger,
+                mock.Mock(label="find-best-refactor", skill_name="find-best-refactor"),
+                stage_index=1,
+            )
+
+            (cloud_root / "app.py").write_text("print('cloud')\n", encoding="utf-8")
+            (studio_root / "studio.py").write_text("print('studio')\n", encoding="utf-8")
+            maybe_commit_for_stages(
+                auto_commits,
+                run_logger,
+                mock.Mock(label="implement-execplan", skill_name="implement-execplan"),
+                stage_index=6,
+            )
+
+            (cloud_root / "notes.txt").write_text("final\n", encoding="utf-8")
+            (studio_root / "notes.txt").write_text("final\n", encoding="utf-8")
+            maybe_commit_checkpoints(auto_commits, run_logger, "slop-janitor: final checkpoint")
+        finally:
+            run_logger.close()
+
+        for repo_root in (cloud_root, studio_root):
+            history = subprocess.run(
+                ["git", "log", "--format=%s", "-4"],
+                cwd=repo_root,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip().splitlines()
+            self.assertEqual(
+                history[:4],
+                [
+                    "slop-janitor: final checkpoint",
+                    "slop-janitor: after implement-execplan",
+                    "slop-janitor: initial plan created",
+                    "initial",
+                ],
+            )
+
     def test_refactor_mode_runs_find_best_refactor_with_prompt(self) -> None:
         exit_code, stdout, stderr, record_path = self.run_pipeline(
             "refactor_with_prompt",
@@ -469,9 +548,34 @@ class CliTests(unittest.TestCase):
             f"$execplan-create {PROMPT}",
         )
 
+    def test_delay_between_cycles_sleeps_once_per_completed_cycle_boundary(self) -> None:
+        with mock.patch("slop_janitor.cli.time.sleep") as sleep:
+            exit_code, _, stderr, record_path = self.run_pipeline(
+                "happy_path",
+                argv=[
+                    "--prompt",
+                    PROMPT,
+                    "--cycles",
+                    "2",
+                    "--improvements",
+                    "1",
+                    "--review",
+                    "1",
+                    "--delay-between-cycles-minutes",
+                    "0.5",
+                ],
+            )
+
+        _, log_text = self.read_run_log(record_path)
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(stderr, "")
+        sleep.assert_called_once_with(30.0)
+        self.assertIn("delayBetweenCyclesMinutes=0.5", log_text)
+        self.assertIn("Sleeping 0.5 minute(s) before the next cycle.", log_text)
+
     def test_happy_path_streams_tokens_and_command_output(self) -> None:
         target_dir = Path(tempfile.mkdtemp())
-        self.addCleanup(target_dir.rmdir)
+        self.addCleanup(lambda: shutil.rmtree(target_dir, ignore_errors=True))
         exit_code, stdout, stderr, record_path = self.run_pipeline("happy_path", target_cwd=target_dir)
         record = self.read_json(record_path)
         log_path, log_text = self.read_run_log(record_path)
@@ -508,6 +612,37 @@ class CliTests(unittest.TestCase):
         initialize = next(message for message in inbound if message.get("method") == "initialize")
         self.assertTrue(initialize["params"]["capabilities"]["experimentalApi"])
 
+    def test_multi_cycle_run_starts_a_fresh_thread_each_cycle(self) -> None:
+        exit_code, _, _, record_path = self.run_pipeline(
+            "happy_path",
+            argv=[
+                "--prompt",
+                PROMPT,
+                "--cycles",
+                "2",
+                "--improvements",
+                "1",
+                "--review",
+                "1",
+            ],
+        )
+        record = self.read_json(record_path)
+        inbound = self.inbound_messages(record)
+        methods = [message.get("method") for message in inbound if "method" in message]
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(methods.count("thread/start"), 2)
+        self.assertEqual(methods.count("turn/start"), 8)
+
+    def test_refactor_mode_fails_when_cycle_does_not_create_pending_execplan(self) -> None:
+        exit_code, _, stderr, _ = self.run_pipeline(
+            "refactor_missing_execplan",
+            argv=["--mode", "refactor", "--prompt", PROMPT],
+        )
+
+        self.assertEqual(exit_code, 1)
+        self.assertIn("did not produce", stderr)
+
     def test_thread_started_notification_does_not_break_first_turn(self) -> None:
         exit_code, _, _, record_path = self.run_pipeline("happy_path")
         record = self.read_json(record_path)
@@ -528,7 +663,7 @@ class CliTests(unittest.TestCase):
 
     def test_fake_server_spawn_override_drives_cli_path(self) -> None:
         server_cwd = Path(tempfile.mkdtemp())
-        self.addCleanup(server_cwd.rmdir)
+        self.addCleanup(lambda: shutil.rmtree(server_cwd, ignore_errors=True))
         exit_code, _, _, record_path = self.run_pipeline(
             "missing_auth",
             server_cwd=server_cwd,
