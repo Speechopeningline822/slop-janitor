@@ -483,6 +483,42 @@ def maybe_commit_checkpoints(auto_commits: list[AutoCommitState], run_logger: Ru
         maybe_commit_checkpoint(auto_commit, run_logger, message)
 
 
+def git_has_upstream(repo_root: Path) -> bool:
+    upstream = subprocess.run(
+        ["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"],
+        cwd=repo_root,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    return upstream.returncode == 0
+
+
+def maybe_push_checkpoint(auto_commit: AutoCommitState, run_logger: RunLogger) -> None:
+    if not auto_commit.enabled:
+        return
+    if not git_has_upstream(auto_commit.repo_root):
+        run_logger.write_line(f"[push] skipping {auto_commit.repo_root}: no upstream configured")
+        return
+    push_result = subprocess.run(
+        ["git", "push"],
+        cwd=auto_commit.repo_root,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if push_result.returncode != 0:
+        detail = (push_result.stderr or push_result.stdout).strip() or "git push failed"
+        run_logger.write_line(f"[push] failed for {auto_commit.repo_root}: {detail}", to_terminal=True, stream="stderr")
+        return
+    run_logger.write_line(f"[push] pushed {auto_commit.repo_root}")
+
+
+def maybe_push_checkpoints(auto_commits: list[AutoCommitState], run_logger: RunLogger) -> None:
+    for auto_commit in auto_commits:
+        maybe_push_checkpoint(auto_commit, run_logger)
+
+
 def maybe_commit_for_stage(
     auto_commit: AutoCommitState,
     run_logger: RunLogger,
@@ -706,6 +742,7 @@ def run(
                 run_logger=run_logger,
             )
         maybe_commit_checkpoints(auto_commits, run_logger, "slop-janitor: final checkpoint")
+        maybe_push_checkpoints(auto_commits, run_logger)
         return 0
     except AppServerError as exc:
         if run_logger is not None:

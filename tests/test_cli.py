@@ -20,6 +20,7 @@ from slop_janitor.cli import maybe_commit_checkpoints
 from slop_janitor.cli import maybe_commit_checkpoint
 from slop_janitor.cli import maybe_commit_for_stages
 from slop_janitor.cli import maybe_commit_for_stage
+from slop_janitor.cli import maybe_push_checkpoints
 from slop_janitor.cli import prepare_auto_commit_states
 from slop_janitor.cli import prepare_auto_commit_state
 from slop_janitor.cli import resolve_codex_workspace
@@ -59,6 +60,36 @@ class CliTests(unittest.TestCase):
         (repo_root / "README.md").write_text("initial\n", encoding="utf-8")
         subprocess.run(["git", "add", "README.md"], cwd=repo_root, check=True)
         subprocess.run(["git", "commit", "-m", "initial"], cwd=repo_root, check=True, capture_output=True, text=True)
+
+    def init_git_remote(self, repo_root: Path) -> Path:
+        remote_root = repo_root.parent / f"{repo_root.name}-remote.git"
+        subprocess.run(["git", "init", "--bare", str(remote_root)], check=True, capture_output=True, text=True)
+        subprocess.run(["git", "remote", "add", "origin", str(remote_root)], cwd=repo_root, check=True)
+        subprocess.run(["git", "push", "-u", "origin", "HEAD"], cwd=repo_root, check=True, capture_output=True, text=True)
+        return remote_root
+
+    def assert_remote_head_matches_local(self, repo_root: Path, remote_root: Path) -> None:
+        branch = subprocess.run(
+            ["git", "branch", "--show-current"],
+            cwd=repo_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        local_head = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=repo_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        remote_head = subprocess.run(
+            ["git", f"--git-dir={remote_root}", "rev-parse", f"refs/heads/{branch}"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        self.assertEqual(remote_head, local_head)
 
     def make_app_server_spawn_spec(
         self,
@@ -407,6 +438,34 @@ class CliTests(unittest.TestCase):
         ).stdout.strip()
         self.assertEqual(history, "initial")
 
+    def test_auto_commit_pushes_final_checkpoint_to_tracking_remote(self) -> None:
+        tempdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tempdir.cleanup)
+        repo_root = Path(tempdir.name)
+        self.init_git_repo(repo_root)
+        remote_root = self.init_git_remote(repo_root)
+        run_logger = RunLogger(repo_root / "run.log", run_cwd=repo_root, mode="pipeline", prompt=PROMPT)
+        try:
+            auto_commit = prepare_auto_commit_state(repo_root, run_logger)
+            self.assertTrue(auto_commit.enabled)
+
+            (repo_root / ".agent").mkdir()
+            (repo_root / ".agent" / "execplan-pending.md").write_text("plan\n", encoding="utf-8")
+            maybe_commit_for_stage(
+                auto_commit,
+                run_logger,
+                mock.Mock(label="execplan-create", skill_name="execplan-create"),
+                stage_index=1,
+            )
+
+            (repo_root / "notes.txt").write_text("final review changes\n", encoding="utf-8")
+            maybe_commit_checkpoint(auto_commit, run_logger, "slop-janitor: final checkpoint")
+            maybe_push_checkpoints([auto_commit], run_logger)
+        finally:
+            run_logger.close()
+
+        self.assert_remote_head_matches_local(repo_root, remote_root)
+
     def test_auto_commit_can_checkpoint_prompt_linked_repo(self) -> None:
         tempdir = tempfile.TemporaryDirectory()
         self.addCleanup(tempdir.cleanup)
@@ -417,6 +476,8 @@ class CliTests(unittest.TestCase):
         studio_root.mkdir()
         self.init_git_repo(cloud_root)
         self.init_git_repo(studio_root)
+        cloud_remote = self.init_git_remote(cloud_root)
+        studio_remote = self.init_git_remote(studio_root)
         prompt = f"Treat {cloud_root} and {studio_root} as one project"
         run_logger = RunLogger(cloud_root / "run.log", run_cwd=cloud_root, mode="refactor", prompt=prompt)
         try:
@@ -446,6 +507,7 @@ class CliTests(unittest.TestCase):
             (cloud_root / "notes.txt").write_text("final\n", encoding="utf-8")
             (studio_root / "notes.txt").write_text("final\n", encoding="utf-8")
             maybe_commit_checkpoints(auto_commits, run_logger, "slop-janitor: final checkpoint")
+            maybe_push_checkpoints(auto_commits, run_logger)
         finally:
             run_logger.close()
 
@@ -466,6 +528,8 @@ class CliTests(unittest.TestCase):
                     "initial",
                 ],
             )
+        self.assert_remote_head_matches_local(cloud_root, cloud_remote)
+        self.assert_remote_head_matches_local(studio_root, studio_remote)
 
     def test_refactor_mode_runs_find_best_refactor_with_prompt(self) -> None:
         exit_code, stdout, stderr, record_path = self.run_pipeline(
