@@ -1,3 +1,0 @@
-interface:
-  display_name: "Find Best Refactor"
-  short_description: "Find the refactor that most reduces system complexity"

